@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<button onclick="mk(192)">Icône 192</button>
+<button onclick="mk(512)">Icône 512</button>
+<script>
+function mk(n){
+  var c = document.createElement('canvas'); c.width = c.height = n;
+  var x = c.getContext('2d');
+  x.fillStyle = '#5b3a1e'; x.fillRect(0, 0, n, n);
+  x.font = (n * 0.6) + 'px serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText('🍄', n / 2, n / 2 + n * 0.04);
+  c.toBlob(function(b){
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = 'icon-' + n + '.png'; a.click();
+  });
+}
+</script>

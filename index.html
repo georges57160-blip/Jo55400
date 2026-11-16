@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#5b3a1e">
+<title>Carnet Champi</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="leaflet/leaflet.css">
+<style>
+  body{margin:0;font-family:system-ui,sans-serif;background:#f4f1ea;color:#222}
+  header{background:#5b3a1e;color:#fff;padding:12px 16px;font-size:1.2em}
+  nav{display:flex;position:sticky;top:0;background:#8a5a2b;z-index:1000}
+  nav button{flex:1;padding:14px 4px;border:0;background:none;color:#fff;font-size:1em;border-bottom:4px solid transparent}
+  nav button.on{background:#5b3a1e;border-bottom-color:#f0c070}
+  section{padding:12px}
+  label{display:block;margin-top:10px;font-weight:600}
+  input,textarea,button.act{width:100%;box-sizing:border-box;padding:12px;font-size:1em;margin-top:6px;border:1px solid #bbb;border-radius:8px}
+  button.act{background:#5b3a1e;color:#fff;border:0;margin-top:12px}
+  button.sec{background:#6b5a4a}
+  button:disabled{opacity:.5}
+  #preview{max-width:100%;border-radius:8px;margin-top:8px}
+  .card{background:#fff;border-radius:10px;padding:10px;margin-bottom:10px;display:flex;gap:10px}
+  .card img{width:80px;height:80px;object-fit:cover;border-radius:8px;flex-shrink:0;cursor:pointer}
+  .card small{color:#555;display:block;margin-top:2px}
+  .btns{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .btns button{min-height:44px;min-width:44px;padding:6px 12px;font-size:1em;border:1px solid #bbb;border-radius:8px;background:#f4f1ea}
+  .btns button.danger{margin-left:auto;background:#fbe3e0;border-color:#d99}
+  #map{height:70vh;border-radius:8px}
+  #gpsInfo{font-size:.9em;color:#555;margin-top:4px}
+  #toast{position:fixed;left:12px;right:12px;bottom:16px;background:#222;color:#fff;padding:12px;border-radius:8px;text-align:center;z-index:5000;display:none}
+  /* Photo en plein écran */
+  #lightbox{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.95);z-index:4000;display:none;align-items:center;justify-content:center;flex-direction:column}
+  #lightbox img{max-width:100%;max-height:80vh;object-fit:contain}
+  #lightbox p{color:#fff;margin:12px 0 0;padding:0 16px;text-align:center}
+  #lightbox button{position:absolute;top:12px;right:12px;background:rgba(255,255,255,.25);color:#fff;border:0;padding:12px 20px;font-size:1.1em;border-radius:8px}
+</style>
+</head>
+<body>
+<header>🍄 Carnet Champi</header>
+<nav>
+  <button data-s="add" class="on" onclick="show('add')">➕ Trouvaille</button>
+  <button data-s="list" onclick="show('list')">📖 Journal</button>
+  <button data-s="mapTab" onclick="show('mapTab')">🗺️ Carte</button>
+</nav>
+
+<!-- ========== ÉCRAN 1 : NOUVELLE TROUVAILLE ========== -->
+<section id="add">
+  <label>Photo</label>
+  <button class="act sec" onclick="$('photoCam').click()">📷 Prendre une photo</button>
+  <button class="act sec" onclick="$('photoFile').click()">🖼️ Choisir dans mes fichiers</button>
+  <input type="file" id="photoCam" accept="image/*" capture="environment" hidden>
+  <input type="file" id="photoFile" accept="image/*" hidden>
+  <img id="preview" hidden alt="">
+
+  <button class="act sec" onclick="getGPS()">📍 Obtenir ma position GPS</button>
+  <div id="gpsInfo">Position non relevée</div>
+
+  <label>Espèce</label>
+  <input id="species" placeholder="Nom (ou « à déterminer »)">
+
+  <label>Substrat / arbres / sol</label>
+  <input id="habitat" placeholder="ex : sous chênes, sol calcaire">
+
+  <label>Notes</label>
+  <textarea id="notes" rows="3" placeholder="Quantité, odeur, état, doutes…"></textarea>
+
+  <button class="act" id="saveBtn" onclick="saveFind()">💾 Enregistrer</button>
+</section>
+
+<!-- ========== ÉCRAN 2 : JOURNAL ========== -->
+<section id="list" hidden>
+  <input id="search" placeholder="🔍 Rechercher (espèce, lieu, notes…)">
+  <button class="act sec" id="nearBtn" onclick="toggleNearby()">📍 À proximité (500 m)</button>
+  <button class="act" onclick="sharePhotos()">📤 Envoyer les photos affichées (Google Photos)</button>
+  <button class="act sec" onclick="exportCSV()">⬇️ Exporter en CSV (tableau)</button>
+  <div id="items" style="margin-top:12px"></div>
+</section>
+
+<!-- ========== ÉCRAN 3 : CARTE ========== -->
+<section id="mapTab" hidden>
+  <div id="map"></div>
+  <p id="mapMsg"></p>
+</section>
+
+<!-- Photo en plein écran -->
+<div id="lightbox" onclick="closeLightbox()">
+  <button onclick="event.stopPropagation();closeLightbox()">✕ Fermer</button>
+  <img id="lightboxImg" alt="">
+  <p id="lightboxTxt"></p>
+</div>
+
+<div id="toast"></div>
+
+<script src="leaflet/leaflet.js"></script>
+<script>
+// ---------- Variables générales ----------
+var db = null, photoBlob = null, photoDate = null, pos = null;
+var map = null, layer = null;
+var nearbyOn = false, me = null;
+var shownFinds = [], mapTarget = null;
+var lightUrl = null, toastTimer, searchTimer;
+
+function $(id){ return document.getElementById(id); }
+
+function toast(msg){
+  var t = $('toast');
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.style.display = 'none'; }, 3000);
+}
+
+// ==================================================
+//  BASE DE DONNÉES (dans le téléphone)
+// ==================================================
+var req = indexedDB.open('carnet-champi', 1);
+req.onupgradeneeded = function(e){
+  e.target.result.createObjectStore('finds', {keyPath:'id', autoIncrement:true});
+};
+req.onsuccess = function(e){
+  db = e.target.result;
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+  renderList();
+};
+req.onerror = function(){ alert('Base de données locale indisponible.'); };
+
+function tx(mode, fn){
+  return new Promise(function(resolve, reject){
+    var t = db.transaction('finds', mode);
+    var r = fn(t.objectStore('finds'));
+    t.oncomplete = function(){ resolve(r && r.result); };
+    t.onerror = t.onabort = function(){ reject(t.error); };
+  });
+}
+function all(){ return tx('readonly', function(s){ return s.getAll(); }); }
+function add(o){ return tx('readwrite', function(s){ return s.add(o); }); }
+function del(id){ return tx('readwrite', function(s){ return s.delete(id); }); }
+
+// ==================================================
+//  LECTURE EXIF (GPS + date d'une photo)
+// ==================================================
+async function readExif(file){
+  try {
+    var buf = await file.slice(0, 262144).arrayBuffer();
+    var v = new DataView(buf);
+    if (v.getUint16(0) !== 0xFFD8) return null;
+    var off = 2;
+    while (off + 4 < v.byteLength) {
+      var marker = v.getUint16(off);
+      if (marker === 0xFFDA || (marker & 0xFF00) !== 0xFF00) break;
+      var len = v.getUint16(off + 2);
+      if (marker === 0xFFE1 && v.getUint32(off + 4) === 0x45786966) return parseTiff(v, off + 10);
+      off += 2 + len;
+    }
+  } catch(e) {}
+  return null;
+}
+function parseTiff(v, t){
+  var le = v.getUint16(t) === 0x4949;
+  var u16 = function(o){ return v.getUint16(o, le); };
+  var u32 = function(o){ return v.getUint32(o, le); };
+  if (u16(t + 2) !== 42) return null;
+  function findTag(ifd, tag){
+    var n = u16(ifd);
+    for (var i = 0; i < n; i++) { var e = ifd + 2 + i * 12; if (u16(e) === tag) return e; }
+    return null;
+  }
+  function rats(e, n){
+    var o = t + u32(e + 8), r = [];
+    for (var i = 0; i < n; i++) r.push(u32(o + i * 8) / (u32(o + i * 8 + 4) || 1));
+    return r;
+  }
+  var out = {};
+  var ifd0 = t + u32(t + 4);
+  var exifPtr = findTag(ifd0, 0x8769);
+  if (exifPtr) {
+    var d = findTag(t + u32(exifPtr + 8), 0x9003);
+    if (d) {
+      var s = '';
+      for (var i = 0; i < 19; i++) s += String.fromCharCode(v.getUint8(t + u32(d + 8) + i));
+      var m = s.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+      if (m) out.date = new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]).toISOString();
+    }
+  }
+  var gpsPtr = findTag(ifd0, 0x8825);
+  if (gpsPtr) {
+    var g = t + u32(gpsPtr + 8);
+    var latE = findTag(g, 2), lonE = findTag(g, 4);
+    if (latE && lonE) {
+      var toDeg = function(a){ return a[0] + a[1] / 60 + a[2] / 3600; };
+      var lat = toDeg(rats(latE, 3)), lon = toDeg(rats(lonE, 3));
+      var latRef = findTag(g, 1), lonRef = findTag(g, 3);
+      if (latRef && String.fromCharCode(v.getUint8(latRef + 8)) === 'S') lat = -lat;
+      if (lonRef && String.fromCharCode(v.getUint8(lonRef + 8)) === 'W') lon = -lon;
+      if (isFinite(lat) && isFinite(lon) && (lat || lon)) {
+        out.pos = { lat: lat, lon: lon, alt: null, acc: null };
+        var altE = findTag(g, 6);
+        if (altE) {
+          var alt = rats(altE, 1)[0];
+          var altRef = findTag(g, 5);
+          if (altRef && v.getUint8(altRef + 8) === 1) alt = -alt;
+          out.pos.alt = alt;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// ==================================================
+//  NAVIGATION (le bouton Retour d'Android fonctionne)
+// ==================================================
+function show(id, fromHistory){
+  document.querySelectorAll('section').forEach(function(s){ s.hidden = s.id !== id; });
+  document.querySelectorAll('nav button').forEach(function(b){
+    b.classList.toggle('on', b.getAttribute('data-s') === id);
+  });
+  window.scrollTo(0, 0);
+  if (!fromHistory) history.pushState({id: id}, '');
+  if (id === 'list') renderList();
+  if (id === 'mapTab') initMap();
+}
+window.addEventListener('popstate', function(e){
+  if ($('lightbox').style.display === 'flex') closeLightbox(true);
+  show((e.state && e.state.id) || 'add', true);
+});
+history.replaceState({id: 'add'}, '');
+
+// ==================================================
+//  PHOTO
+// ==================================================
+function handlePhoto(e, source){
+  var f = e.target.files[0]; if (!f) return;
+  photoBlob = null; photoDate = null;
+  $('saveBtn').disabled = true;
+  var url = URL.createObjectURL(f);
+  var img = new Image();
+  img.onload = function(){
+    // Taille max 1280 px (mettez 2048 pour une meilleure qualité)
+    var s = Math.min(1, 1280 / Math.max(img.width, img.height));
+    var c = document.createElement('canvas');
+    c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    c.toBlob(function(b){
+      photoBlob = b;
+      var p = $('preview');
+      p.src = URL.createObjectURL(b); p.hidden = false;
+      $('saveBtn').disabled = false;
+    }, 'image/jpeg', 0.85);
+    URL.revokeObjectURL(url);
+  };
+  img.onerror = function(){
+    $('saveBtn').disabled = false;
+    alert('Cette image ne peut pas être lue par le navigateur (format HEIC ?).');
+  };
+  img.src = url;
+
+  var info = $('gpsInfo');
+  if (source === 'camera') {
+    getGPS();
+  } else {
+    pos = null;
+    info.textContent = 'Lecture du GPS de la photo…';
+    readExif(f).then(function(exif){
+      if (exif && exif.date) photoDate = exif.date;
+      if (exif && exif.pos) {
+        pos = exif.pos;
+        info.textContent = '✅ GPS trouvé dans la photo : ' + pos.lat.toFixed(5) + ', ' + pos.lon.toFixed(5) +
+          (pos.alt != null ? ' — alt. ' + Math.round(pos.alt) + ' m' : '');
+      } else {
+        info.textContent = '📷 Cette photo n\'a pas de GPS (Android le retire parfois). Utilisez le bouton ci-dessus si vous êtes sur place, ou laissez vide.';
+      }
+    });
+  }
+}
+$('photoCam').addEventListener('change', function(e){ handlePhoto(e, 'camera'); });
+$('photoFile').addEventListener('change', function(e){ handlePhoto(e, 'file'); });
+
+// ==================================================
+//  GPS (écoute quelques secondes, garde la meilleure précision)
+// ==================================================
+function getPos(maxWait){
+  return new Promise(function(res, rej){
+    if (!navigator.geolocation) return rej({code: 0});
+    var best = null, id, timer, done = false;
+    function end(err){
+      if (done) return;
+      done = true;
+      navigator.geolocation.clearWatch(id); clearTimeout(timer);
+      if (best) res(best); else rej(err || {code: 3});
+    }
+    id = navigator.geolocation.watchPosition(function(p){
+      var c = p.coords;
+      if (!best || c.accuracy < best.acc) {
+        best = {lat: c.latitude, lon: c.longitude, alt: c.altitude, acc: c.accuracy};
+      }
+      if (best.acc <= 15) end();
+    }, end, {enableHighAccuracy: true, maximumAge: 0, timeout: 20000});
+    timer = setTimeout(end, maxWait || 12000);
+  });
+}
+function gpsError(e){
+  if (e && e.code === 1) return 'Localisation refusée : autorisez-la dans les réglages du site.';
+  if (e && e.code === 2) return 'Position indisponible (GPS désactivé ou signal trop faible).';
+  if (e && e.code === 0) return 'GPS non disponible sur cet appareil.';
+  return 'Délai dépassé : réessayez à découvert.';
+}
+async function getGPS(){
+  var info = $('gpsInfo');
+  info.textContent = 'Recherche de la position… (jusqu\'à 12 s)';
+  try {
+    pos = await getPos();
+    info.textContent = '✅ ' + pos.lat.toFixed(5) + ', ' + pos.lon.toFixed(5) +
+      (pos.alt != null ? ' — alt. ' + Math.round(pos.alt) + ' m' : '') + ' (±' + Math.round(pos.acc) + ' m)';
+  } catch(e) {
+    info.textContent = '❌ ' + gpsError(e);
+  }
+}
+
+// ==================================================
+//  ENREGISTREMENT D'UNE TROUVAILLE
+// ==================================================
+async function saveFind(){
+  if (!photoBlob && !$('species').value.trim()) {
+    return alert('Ajoutez au moins une photo ou un nom d\'espèce.');
+  }
+  try {
+    await add({
+      date: photoDate || new Date().toISOString(),
+      species: $('species').value.trim() || 'À déterminer',
+      habitat: $('habitat').value.trim(),
+      notes: $('notes').value.trim(),
+      photo: photoBlob,
+      pos: pos
+    });
+  } catch(e) {
+    return alert('Échec de l\'enregistrement (stockage plein ?). Le formulaire n\'a pas été effacé.');
+  }
+  ['species','habitat','notes'].forEach(function(i){ $(i).value = ''; });
+  $('photoCam').value = '';
+  $('photoFile').value = '';
+  $('preview').hidden = true;
+  photoBlob = null; photoDate = null; pos = null;
+  $('gpsInfo').textContent = 'Position non relevée';
+  toast('Trouvaille enregistrée ✅');
+}
+
+// ==================================================
+//  PHOTO EN PLEIN ÉCRAN
+// ==================================================
+function openLightbox(f){
+  if (!f.photo) return;
+  if (lightUrl) URL.revokeObjectURL(lightUrl);
+  lightUrl = URL.createObjectURL(f.photo);
+  $('lightboxImg').src = lightUrl;
+  $('lightboxTxt').textContent = f.species + ' · ' + new Date(f.date).toLocaleString('fr-FR');
+  $('lightbox').style.display = 'flex';
+}
+function closeLightbox(){
+  $('lightbox').style.display = 'none';
+  $('lightboxImg').removeAttribute('src');
+  if (lightUrl) { URL.revokeObjectURL(lightUrl); lightUrl = null; }
+}
+
+// ==================================================
+//  JOURNAL
+// ==================================================
+function dist(a, b){
+  var R = 6371000, r = function(x){ return x * Math.PI / 180; };
+  var dLat = r(b.lat - a.lat), dLon = r(b.lon - a.lon);
+  var h = Math.pow(Math.sin(dLat/2), 2) + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.pow(Math.sin(dLon/2), 2);
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function line(parent, txt){
+  var s = document.createElement('small'); s.textContent = txt; parent.appendChild(s);
+}
+function makeBtn(parent, txt, fn, cls){
+  var b = document.createElement('button');
+  b.textContent = txt; b.onclick = fn;
+  if (cls) b.className = cls;
+  parent.appendChild(b);
+}
+
+async function toggleNearby(){
+  if (nearbyOn) {
+    nearbyOn = false; me = null;
+  } else {
+    toast('Recherche de votre position…');
+    try { me = await getPos(8000); nearbyOn = true; }
+    catch(e) { alert(gpsError(e)); nearbyOn = false; }
+  }
+  $('nearBtn').textContent = nearbyOn ? '✅ À proximité (500 m) : toucher pour désactiver' : '📍 À proximité (500 m)';
+  renderList();
+}
+
+$('search').addEventListener('input', function(){
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(renderList, 200);
+});
+
+async function renderList(){
+  if (!db) return;
+  var finds;
+  try {
+    finds = (await all()).sort(function(a, b){ return b.date.localeCompare(a.date); });
+  } catch(e) { return alert('Lecture du journal impossible.'); }
+
+  var q = $('search').value.toLowerCase();
+  if (q) finds = finds.filter(function(f){
+    return (f.species + ' ' + f.habitat + ' ' + f.notes).toLowerCase().indexOf(q) !== -1;
+  });
+  if (nearbyOn && me) finds = finds.filter(function(f){ return f.pos && dist(me, f.pos) <= 500; });
+  shownFinds = finds;
+
+  var box = $('items');
+  box.innerHTML = finds.length ? '' : '<p>Aucune trouvaille.</p>';
+
+  finds.forEach(function(f){
+    var d = document.createElement('div'); d.className = 'card';
+
+    if (f.photo) {
+      var i = document.createElement('img');
+      i.alt = f.species;
+      i.onload = function(){ URL.revokeObjectURL(i.src); };
+      i.src = URL.createObjectURL(f.photo);
+      i.onclick = function(){ openLightbox(f); };   // agrandir
+      d.appendChild(i);
+    }
+
+    var t = document.createElement('div');
+    t.style.flex = '1'; t.style.minWidth = '0';
+    var b = document.createElement('b'); b.textContent = f.species; t.appendChild(b);
+    line(t, new Date(f.date).toLocaleString('fr-FR'));
+    if (f.habitat) line(t, '🌲 ' + f.habitat);
+    if (f.notes) line(t, '📝 ' + f.notes);
+    if (f.pos) {
+      line(t, '📍 ' + f.pos.lat.toFixed(5) + ', ' + f.pos.lon.toFixed(5));
+      if (nearbyOn && me) line(t, '↔️ à ' + Math.round(dist(me, f.pos)) + ' m');
+    }
+
+    var btns = document.createElement('div'); btns.className = 'btns';
+    if (f.photo) makeBtn(btns, '🔍', function(){ openLightbox(f); });
+    if (f.pos) makeBtn(btns, '🗺️', function(){
+      mapTarget = [f.pos.lat, f.pos.lon];
+      show('mapTab');
+    });
+    if (f.photo) makeBtn(btns, '📤', function(){ sharePhotos([f]); });
+    makeBtn(btns, '🗑️', async function(){
+      if (!confirm('Supprimer cette trouvaille ?')) return;
+      try { await del(f.id); } catch(e) { return alert('Suppression impossible.'); }
+      renderList();
+    }, 'danger');
+    t.appendChild(btns);
+    d.appendChild(t);
+    box.appendChild(d);
+  });
+}
+
+// ==================================================
+//  CARTE
+// ==================================================
+async function initMap(){
+  var msg = $('mapMsg');
+  if (typeof L === 'undefined') {
+    msg.textContent = 'Carte indisponible : la bibliothèque Leaflet n\'a pas pu être chargée (pas de connexion ?).';
+    return;
+  }
+  if (!map) {
+    map = L.map('map').setView([46.6, 2.5], 6);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© OpenStreetMap', crossOrigin: true
+    }).addTo(map);
+    layer = L.layerGroup().addTo(map);
+  }
+  layer.clearLayers();
+  var finds;
+  try { finds = await all(); }
+  catch(e) { msg.textContent = 'Lecture des trouvailles impossible.'; return; }
+
+  var pts = [];
+  finds.forEach(function(f){
+    if (!f.pos) return;
+    pts.push([f.pos.lat, f.pos.lon]);
+    var pop = document.createElement('div');
+    var bb = document.createElement('b'); bb.textContent = f.species; pop.appendChild(bb);
+    pop.appendChild(document.createElement('br'));
+    pop.appendChild(document.createTextNode(new Date(f.date).toLocaleDateString('fr-FR')));
+    L.marker([f.pos.lat, f.pos.lon]).addTo(layer).bindPopup(pop);
+  });
+  msg.textContent = pts.length + ' trouvaille(s) géolocalisée(s).';
+
+  // On attend que la carte soit visible avant de la cadrer
+  setTimeout(function(){
+    map.invalidateSize();
+    if (mapTarget) { map.setView(mapTarget, 17); mapTarget = null; }
+    else if (pts.length) map.fitBounds(pts, {padding: [30, 30], maxZoom: 16});
+  }, 150);
+}
+
+// ==================================================
+//  EXPORT CSV (tableau)
+// ==================================================
+async function exportCSV(){
+  var finds;
+  try { finds = await all(); } catch(e) { return alert('Export impossible.'); }
+  var rows = [['date','espece','habitat','notes','lat','lon','alt']];
+  finds.forEach(function(f){
+    rows.push([f.date, f.species, f.habitat, f.notes,
+      f.pos ? f.pos.lat : '', f.pos ? f.pos.lon : '',
+      (f.pos && f.pos.alt != null) ? f.pos.alt : '']);
+  });
+  var csv = rows.map(function(r){
+    return r.map(function(v){
+      v = String(v);
+      if (/^[=+\-@]/.test(v)) v = '\'' + v;      // protection contre les formules
+      return '"' + v.replace(/"/g, '""') + '"';
+    }).join(',');
+  }).join('\n');
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], {type: 'text/csv'}));
+  a.download = 'carnet-champi.csv';
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+}
+
+// ==================================================
+//  ÉCRITURE DE LA DATE + DU GPS DANS LE JPG (EXIF)
+// ==================================================
+function makeExif(dateISO, p0){
+  var hasGps = !!(p0 && isFinite(p0.lat) && isFinite(p0.lon));
+  var hasAlt = hasGps && p0.alt != null && isFinite(p0.alt);
+  var n0 = hasGps ? 2 : 1;
+  var exifIfd = 8 + 2 + n0 * 12 + 4;
+  var dateOff = exifIfd + 2 + 12 + 4;
+  var gpsIfd = dateOff + 20;
+  var gpsN = hasAlt ? 6 : 4;
+  var gpsData = gpsIfd + 2 + gpsN * 12 + 4;
+  var size = hasGps ? gpsData + 48 + (hasAlt ? 8 : 0) : gpsIfd;
+  var b = new ArrayBuffer(size), v = new DataView(b), u = new Uint8Array(b), p = 8;
+  v.setUint16(0, 0x4D4D); v.setUint16(2, 42); v.setUint32(4, 8);
+  function ent(tag, type, count){
+    v.setUint16(p, tag); v.setUint16(p + 2, type); v.setUint32(p + 4, count);
+    var o = p + 8; p += 12; return o;
+  }
+  function rat(o, n, d){ v.setUint32(o, Math.round(n)); v.setUint32(o + 4, d); }
+  function dms(o, x){
+    x = Math.abs(x);
+    var d = Math.floor(x), m = Math.floor((x - d) * 60), s = ((x - d) * 60 - m) * 60;
+    rat(o, d, 1); rat(o + 8, m, 1); rat(o + 16, s * 10000, 10000);
+  }
+  // Bloc principal
+  v.setUint16(p, n0); p += 2;
+  v.setUint32(ent(0x8769, 4, 1), exifIfd);
+  if (hasGps) v.setUint32(ent(0x8825, 4, 1), gpsIfd);
+  v.setUint32(p, 0);
+  // Date de prise de vue
+  p = exifIfd; v.setUint16(p, 1); p += 2;
+  v.setUint32(ent(0x9003, 2, 20), dateOff);
+  v.setUint32(p, 0);
+  var d = new Date(dateISO), z = function(n){ return ('0' + n).slice(-2); };
+  var s = d.getFullYear() + ':' + z(d.getMonth() + 1) + ':' + z(d.getDate()) + ' ' +
+          z(d.getHours()) + ':' + z(d.getMinutes()) + ':' + z(d.getSeconds());
+  for (var i = 0; i < 19; i++) u[dateOff + i] = s.charCodeAt(i);
+  // GPS
+  if (hasGps) {
+    p = gpsIfd; v.setUint16(p, gpsN); p += 2;
+    u[ent(1, 2, 2)] = p0.lat < 0 ? 83 : 78;
+    v.setUint32(ent(2, 5, 3), gpsData); dms(gpsData, p0.lat);
+    u[ent(3, 2, 2)] = p0.lon < 0 ? 87 : 69;
+    v.setUint32(ent(4, 5, 3), gpsData + 24); dms(gpsData + 24, p0.lon);
+    if (hasAlt) {
+      u[ent(5, 1, 1)] = p0.alt < 0 ? 1 : 0;
+      v.setUint32(ent(6, 5, 1), gpsData + 48); rat(gpsData + 48, Math.abs(p0.alt) * 100, 100);
+    }
+    v.setUint32(p, 0);
+  }
+  return u;
+}
+
+async function withExif(f){
+  var jpg = new Uint8Array(await f.photo.arrayBuffer());
+  var tiff = makeExif(f.date, f.pos);
+  var len = 8 + tiff.length;
+  var head = new Uint8Array(10 + tiff.length);
+  head.set([0xFF, 0xE1, len >> 8, len & 255, 0x45, 0x78, 0x69, 0x66, 0, 0]);
+  head.set(tiff, 10);
+  return new Blob([jpg.subarray(0, 2), head, jpg.subarray(2)], {type: 'image/jpeg'});
+}
+
+function fileName(f, i){
+  var n = (f.species || 'champi').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '').slice(0, 30);
+  return f.date.slice(0, 10) + '_' + n + '_' + i + '.jpg';
+}
+
+// ==================================================
+//  ENVOI DES PHOTOS (menu de partage → Google Photos)
+// ==================================================
+async function sharePhotos(list){
+  var finds = (list || shownFinds).filter(function(f){ return f.photo; });
+  if (!finds.length) return alert('Aucune photo à envoyer.');
+  toast('Préparation de ' + finds.length + ' photo(s)…');
+  var files = [];
+  for (var i = 0; i < finds.length; i++) {
+    files.push(new File([await withExif(finds[i])], fileName(finds[i], i + 1), {type: 'image/jpeg'}));
+  }
+  try {
+    if (navigator.canShare && navigator.canShare({files: files})) {
+      await navigator.share({files: files, title: 'Carnet Champi'});
+      return;
+    }
+  } catch(e) {
+    if (e.name === 'AbortError') return;
+  }
+  // Solution de secours : téléchargement des JPG
+  files.forEach(function(file, k){
+    setTimeout(function(){
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(file);
+      a.download = file.name;
+      a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+    }, k * 400);
+  });
+  toast('Photos téléchargées dans le dossier Téléchargements');
+}
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+</script>
+</body>
+</html>
