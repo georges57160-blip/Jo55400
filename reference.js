@@ -34,7 +34,7 @@ sec.innerHTML=
 '<div id="refGrid"></div>'+
 '<p id="refMsg"></p>'+
 '<button class="act sec" id="packBtn">📥 Importer la bibliothèque (champi.pack)</button>'+
-'<input type="file" id="packFile" hidden>'+
+'<input type="file" id="packFile" accept=".pack,application/octet-stream" hidden>'+
 '<div id="refProg"></div>';
 document.body.insertBefore(sec,$('lightbox'));
 
