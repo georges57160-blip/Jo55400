@@ -440,6 +440,7 @@ async function renderList(){
 
     var btns = document.createElement('div'); btns.className = 'btns';
     if (f.photo) makeBtn(btns, '🔍', function(){ openLightbox(f); });
+        if (f.photo) makeBtn(btns, '⚖️', function(){ openCompare(f); });
     if (f.pos) makeBtn(btns, '🗺️', function(){
       mapTarget = [f.pos.lat, f.pos.lon];
       show('mapTab');
