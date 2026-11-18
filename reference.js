@@ -176,7 +176,7 @@ async function pickOrView(e){
   var it=await getItem(e.id);
   if(!it) return;
   if(lastFind) showCompare(it.photo,label(e));
-  else showBlob(it.photo,label(e)+(subLabel(e)?' · '+subLabel(e):''));
+  else if(window.refView) window.refView(e,it.photo,label(e)+(subLabel(e)?' · '+subLabel(e):''));else showBlob(it.photo,label(e)+(subLabel(e)?' · '+subLabel(e):''));
 }
 
 function showCompare(blob,name){
