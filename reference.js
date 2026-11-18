@@ -149,7 +149,7 @@ function renderRef(){
     });
   }
   var LIMIT=150;
-  var singles=q||refPath.length>=NAV.length||list.length<=12;
+  var singles=q||refPath.length>=NAV.length||list.length<=12||(refPath.length>0&&refPath[refPath.length-1]==='Non classé');
   if(singles){
     list.sort(function(a,b){return label(a).localeCompare(label(b),'fr');})
       .slice(0,LIMIT).forEach(function(e){
