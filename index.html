@@ -441,6 +441,7 @@ async function renderList(){
     var btns = document.createElement('div'); btns.className = 'btns';
     if (f.photo) makeBtn(btns, '🔍', function(){ openLightbox(f); }); 
         if (f.photo) makeBtn(btns, '⚖️', function(){ openCompare(f); });
+        makeBtn(btns, '✏️', function(){ editFind(f); });
     if (f.pos) makeBtn(btns, '🗺️', function(){
       mapTarget = [f.pos.lat, f.pos.lon];
       show('mapTab');
@@ -628,5 +629,6 @@ async function sharePhotos(list){
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
 </script>
 <script src="reference.js"></script>     
+  <script src="edit.js"></script>
 </body>
 </html>
